@@ -1,15 +1,29 @@
 
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+from backend.app.database import (
+    get_connection,
+    initialize_database,
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    yield
+
 
 app = FastAPI(
     title="PatchOps API",
     description="Automated patch management platform",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan,
 )
 
 
-# Device data model
 class Device(BaseModel):
     device_id: str
     hostname: str
@@ -20,16 +34,11 @@ class Device(BaseModel):
     python_version: str
 
 
-# Temporary in-memory device registry
-devices: dict[str, Device] = {}
-
-
-# Existing endpoints
 @app.get("/")
 def root():
     return {
         "application": "PatchOps",
-        "message": "PatchOps API is running"
+        "message": "PatchOps API is running",
     }
 
 
@@ -37,36 +46,72 @@ def root():
 def health_check():
     return {
         "status": "healthy",
-        "service": "patchops-api"
+        "service": "patchops-api",
     }
 
 
-# New device registration endpoint
 @app.post("/devices/register", status_code=201)
 def register_device(device: Device):
-    devices[device.device_id] = device
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO devices (
+                device_id,
+                hostname,
+                operating_system,
+                os_version,
+                os_release,
+                architecture,
+                python_version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(device_id) DO UPDATE SET
+                hostname = excluded.hostname,
+                operating_system = excluded.operating_system,
+                os_version = excluded.os_version,
+                os_release = excluded.os_release,
+                architecture = excluded.architecture,
+                python_version = excluded.python_version
+            """,
+            (
+                device.device_id,
+                device.hostname,
+                device.operating_system,
+                device.os_version,
+                device.os_release,
+                device.architecture,
+                device.python_version,
+            ),
+        )
 
     return {
         "message": "Device registered successfully",
-        "device": device
+        "device": device,
     }
 
 
-# Retrieve all registered devices
 @app.get("/devices")
 def list_devices():
-    return list(devices.values())
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM devices ORDER BY hostname"
+        ).fetchall()
+
+    return [dict(row) for row in rows]
 
 
-# Retrieve a specific device
 @app.get("/devices/{device_id}")
 def get_device(device_id: str):
-    from fastapi import HTTPException
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM devices WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
 
-    if device_id not in devices:
+    if row is None:
         raise HTTPException(
             status_code=404,
-            detail="Device not found"
+            detail="Device not found",
         )
 
-    return devices[device_id]
+    return dict(row)
