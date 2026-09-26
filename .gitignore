@@ -1,20 +1,16 @@
-
-# Python virtual environments
-.venv/
-
-# Python cache files
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
+.venv/
 
-# Environment variables and secrets
+# Environment variables
 .env
 .env.*
 !.env.example
 
-# Frontend dependencies
-node_modules/
-
-# Build outputs
-dist/
-build/
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
